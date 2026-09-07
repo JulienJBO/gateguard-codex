@@ -41,6 +41,7 @@ dev = [
 gateguard = "gateguard.cli:main"
 gateguard-hook = "gateguard.hook:main"
 gateguard-read-tracker = "gateguard.read_tracker:main"
+gateguard-codex-hook = "gateguard.codex:hook_main"
 
 [project.urls]
 Homepage = "https://github.com/zunoworks/gateguard"
@@ -48,6 +49,10 @@ Issues = "https://github.com/zunoworks/gateguard/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gateguard"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/gateguard/resources/gateguard-codex/SKILL.md" = "gateguard/resources/gateguard-codex/SKILL.md"
+"src/gateguard/resources/gateguard-codex/agents/openai.yaml" = "gateguard/resources/gateguard-codex/agents/openai.yaml"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

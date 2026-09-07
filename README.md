@@ -2,7 +2,7 @@
 
 ![PyPI](https://img.shields.io/pypi/v/gateguard-ai) ![Python](https://img.shields.io/pypi/pyversions/gateguard-ai) ![License](https://img.shields.io/pypi/l/gateguard-ai) ![CI](https://github.com/zunoworks/gateguard/actions/workflows/ci.yml/badge.svg)
 
-**A fact-forcing hook gate for Claude Code.**
+**A fact-forcing hook gate for Claude Code and Codex.**
 
 > **Not to be confused** with `gateguard-personal` — an internal hook used at ZUNO WORKS with its own version series (`v4.x`). This repository is the public Python package `gateguard-ai` (`v0.x.y` series).
 
@@ -122,6 +122,39 @@ This does three things:
    `gateguard init` upgrades a v0.5.x "Read"-only registration in place.
 
 Restart Claude Code and the gate is active.
+
+### Codex
+
+This fork adds Codex support through a guarded local MCP server. Codex currently
+provides a pre-tool hook but no post-tool hook, so native write and shell tools
+are fail-closed; GateGuard records investigation only after its own MCP tool has
+completed successfully.
+
+Install this Git-only fork in place of `gateguard-ai` from PyPI, then run:
+
+```bash
+gateguard init --runtime codex
+```
+
+By default, the command installs a project-local integration: it merges the
+`PreToolUse` hook into `.codex/hooks.json`, adds the `gateguard` MCP server to
+`.codex/config.toml`, and installs the auto-invoked `gateguard-codex` skill in
+`.agents/skills`. It never invokes `codex mcp` or writes `CODEX_HOME`.
+
+Use `gateguard init --runtime codex --global` only when you deliberately want
+the legacy shared integration: the hook and skill go to `CODEX_HOME`, and
+GateGuard registers the MCP server through `codex mcp`. In either mode,
+`.gateguard.yml` is written in the target project. Restart Codex and accept its
+normal hook-trust prompt. Do not use `--dangerously-bypass-hook-trust`.
+
+The `gateguard` MCP server exposes guarded `read`, `search`, `glob`, `write`,
+and `command` tools. A native mutation is intentionally rejected with a message
+to use those tools, so a failed operation never becomes ledger evidence.
+
+Check the project-local installation with
+`gateguard doctor --runtime codex [PATH]`; add `--global` to inspect the
+shared `CODEX_HOME` installation. Validate a real local session with
+`scripts/validate-codex-e2e.sh`.
 
 ## What the gates do
 
