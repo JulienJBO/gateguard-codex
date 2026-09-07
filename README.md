@@ -144,6 +144,11 @@ The `gateguard` MCP server exposes guarded `read`, `search`, `glob`, `write`,
 and `command` tools. A native mutation is intentionally rejected with a message
 to use those tools, so a failed operation never becomes ledger evidence.
 
+`gateguard init --runtime codex` also installs the auto-invoked
+`gateguard-codex` skill in `$CODEX_HOME/skills`. It guides only already-protected
+sessions; it never installs or bypasses hooks itself. Validate a real local
+session with `scripts/validate-codex-e2e.sh`.
+
 ## What the gates do
 
 | Gate | Trigger | What Claude must do |

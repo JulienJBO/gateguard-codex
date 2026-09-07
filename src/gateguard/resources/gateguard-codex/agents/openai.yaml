@@ -1,0 +1,4 @@
+interface:
+  display_name: GateGuard Codex
+  short_description: Use GateGuard MCP tools in protected Codex sessions.
+  default_prompt: Work through the guarded GateGuard MCP tools and retain audit evidence.
