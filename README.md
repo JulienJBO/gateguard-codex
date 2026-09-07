@@ -136,18 +136,25 @@ Install this Git-only fork in place of `gateguard-ai` from PyPI, then run:
 gateguard init --runtime codex
 ```
 
-The command registers `gateguard mcp serve` with Codex and a `PreToolUse` hook
-in `$CODEX_HOME/hooks.json`. Restart Codex and accept its normal hook-trust
-prompt. Do not use `--dangerously-bypass-hook-trust`.
+By default, the command installs a project-local integration: it merges the
+`PreToolUse` hook into `.codex/hooks.json`, adds the `gateguard` MCP server to
+`.codex/config.toml`, and installs the auto-invoked `gateguard-codex` skill in
+`.agents/skills`. It never invokes `codex mcp` or writes `CODEX_HOME`.
+
+Use `gateguard init --runtime codex --global` only when you deliberately want
+the legacy shared integration: the hook and skill go to `CODEX_HOME`, and
+GateGuard registers the MCP server through `codex mcp`. In either mode,
+`.gateguard.yml` is written in the target project. Restart Codex and accept its
+normal hook-trust prompt. Do not use `--dangerously-bypass-hook-trust`.
 
 The `gateguard` MCP server exposes guarded `read`, `search`, `glob`, `write`,
 and `command` tools. A native mutation is intentionally rejected with a message
 to use those tools, so a failed operation never becomes ledger evidence.
 
-`gateguard init --runtime codex` also installs the auto-invoked
-`gateguard-codex` skill in `$CODEX_HOME/skills`. It guides only already-protected
-sessions; it never installs or bypasses hooks itself. Validate a real local
-session with `scripts/validate-codex-e2e.sh`.
+Check the project-local installation with
+`gateguard doctor --runtime codex [PATH]`; add `--global` to inspect the
+shared `CODEX_HOME` installation. Validate a real local session with
+`scripts/validate-codex-e2e.sh`.
 
 ## What the gates do
 

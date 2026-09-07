@@ -134,12 +134,13 @@ def _codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 
 
-def _install_codex_skill(codex_home: Path) -> Path:
+def _install_codex_skill(target_root: Path, *, global_install: bool) -> Path:
     """Install only GateGuard-owned files; never delete sibling skill content."""
     source = importlib.resources.files("gateguard").joinpath(
         "resources", CODEX_SKILL_NAME
     )
-    target = codex_home / "skills" / CODEX_SKILL_NAME
+    skills_dir = target_root / ("skills" if global_install else ".agents/skills")
+    target = skills_dir / CODEX_SKILL_NAME
     existing = target / "SKILL.md"
     if existing.exists() and f"name: {CODEX_SKILL_NAME}" not in existing.read_text(encoding="utf-8"):
         raise ValueError(f"refusing to replace non-GateGuard skill: {target}")
@@ -150,8 +151,60 @@ def _install_codex_skill(codex_home: Path) -> Path:
     return target
 
 
-def _codex_hook_present(codex_home: Path) -> bool:
-    path = codex_home / "hooks.json"
+def _merge_codex_hook(hooks_path: Path) -> bool:
+    try:
+        hooks = json.loads(hooks_path.read_text(encoding="utf-8")) if hooks_path.exists() else {}
+    except json.JSONDecodeError:
+        raise ValueError(f"Refusing invalid Codex hooks file: {hooks_path}")
+    groups = hooks.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    if any(
+        h.get("command") == CODEX_HOOK_COMMAND
+        for group in groups if isinstance(group, dict)
+        for h in group.get("hooks", [])
+        if isinstance(h, dict)
+    ):
+        return False
+    groups.append({
+        "matcher": ".*",
+        "hooks": [{
+            "type": "command",
+            "command": CODEX_HOOK_COMMAND,
+            "timeout": PRE_HOOK_TIMEOUT_MS,
+        }],
+    })
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def _local_codex_mcp_present(config_path: Path) -> bool:
+    if not config_path.exists():
+        return False
+    return any(
+        line.strip() == "[mcp_servers.gateguard]"
+        for line in config_path.read_text(encoding="utf-8").splitlines()
+    )
+
+
+def _merge_local_codex_config(config_path: Path) -> bool:
+    if _local_codex_mcp_present(config_path):
+        return False
+    existing = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    suffix = "" if not existing or existing.endswith("\n") else "\n"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        existing + suffix + (
+            "\n[mcp_servers.gateguard]\n"
+            'command = "gateguard"\n'
+            'args = ["mcp", "serve"]\n'
+        ),
+        encoding="utf-8",
+    )
+    return True
+
+
+def _codex_hook_present(root: Path, *, global_install: bool) -> bool:
+    path = root / ("hooks.json" if global_install else ".codex/hooks.json")
     try:
         hooks = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except json.JSONDecodeError:
@@ -159,20 +212,26 @@ def _codex_hook_present(codex_home: Path) -> bool:
     return any(
         h.get("command") == CODEX_HOOK_COMMAND
         for group in hooks.get("hooks", {}).get("PreToolUse", [])
+        if isinstance(group, dict)
         for h in group.get("hooks", [])
+        if isinstance(h, dict)
     )
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     if args.runtime != "codex":
-        print("Only `doctor --runtime codex` is currently supported.")
+        print("Only doctor --runtime codex is currently supported.")
         return 2
-    home = _codex_home()
-    skill = home / "skills" / CODEX_SKILL_NAME / "SKILL.md"
+    root = _codex_home() if args.global_install else (
+        Path(args.path).resolve() if args.path else Path.cwd()
+    )
+    skill = root / ("skills" if args.global_install else ".agents/skills") / CODEX_SKILL_NAME / "SKILL.md"
     checks = {
-        "hook": _codex_hook_present(home),
+        "hook": _codex_hook_present(root, global_install=args.global_install),
         "skill": skill.exists() and f"name: {CODEX_SKILL_NAME}" in skill.read_text(encoding="utf-8"),
     }
+    if not args.global_install:
+        checks["mcp"] = _local_codex_mcp_present(root / ".codex/config.toml")
     for name, passed in checks.items():
         print(f"{'OK' if passed else 'MISSING'} {name}")
     return 0 if all(checks.values()) else 1
@@ -192,38 +251,42 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("Skipped hook registration (--skip-hook)")
         return 0
     if args.runtime == "codex":
-        codex_home = _codex_home()
-        hooks_path = codex_home / "hooks.json"
+        if args.global_install:
+            root = _codex_home()
+            hooks_path = root / "hooks.json"
+            try:
+                _merge_codex_hook(hooks_path)
+                skill_path = _install_codex_skill(root, global_install=True)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            try:
+                registered_mcp = subprocess.run(
+                    ["codex", "mcp", "get", "gateguard"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                ).returncode == 0
+                if not registered_mcp:
+                    subprocess.run(
+                        ["codex", "mcp", "add", "gateguard", "--", "gateguard", "mcp", "serve"],
+                        check=True,
+                    )
+            except (OSError, subprocess.CalledProcessError) as exc:
+                print(f"Codex MCP registration failed: {exc}", file=sys.stderr)
+                return 1
+            print(f"Registered global Codex hook in {hooks_path} and skill in {skill_path}; restart Codex to trust and load it.")
+            return 0
+
+        hooks_path = target_dir / ".codex" / "hooks.json"
+        config_path = target_dir / ".codex" / "config.toml"
         try:
-            hooks = json.loads(hooks_path.read_text(encoding="utf-8")) if hooks_path.exists() else {}
-        except json.JSONDecodeError:
-            print(f"Refusing invalid Codex hooks file: {hooks_path}", file=sys.stderr)
-            return 1
-        groups = hooks.setdefault("hooks", {}).setdefault("PreToolUse", [])
-        if not any(h.get("command") == CODEX_HOOK_COMMAND for g in groups for h in g.get("hooks", [])):
-            groups.append({"matcher": ".*", "hooks": [{"type": "command", "command": CODEX_HOOK_COMMAND, "timeout": PRE_HOOK_TIMEOUT_MS}]})
-            hooks_path.parent.mkdir(parents=True, exist_ok=True)
-            hooks_path.write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
-        try:
-            registered_mcp = subprocess.run(
-                ["codex", "mcp", "get", "gateguard"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            ).returncode == 0
-            if not registered_mcp:
-                subprocess.run(
-                    ["codex", "mcp", "add", "gateguard", "--", "gateguard", "mcp", "serve"],
-                    check=True,
-                )
-        except (OSError, subprocess.CalledProcessError) as exc:
-            print(f"Codex MCP registration failed: {exc}", file=sys.stderr)
-            return 1
-        try:
-            skill_path = _install_codex_skill(codex_home)
+            _merge_codex_hook(hooks_path)
+            _merge_local_codex_config(config_path)
+            skill_path = _install_codex_skill(target_dir, global_install=False)
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        print(f"Registered Codex hook in {hooks_path} and skill in {skill_path}; restart Codex to trust and load it.")
+        print(f"Registered local Codex hook in {hooks_path}, MCP config in {config_path}, and skill in {skill_path}; restart Codex to trust and load it.")
         return 0
 
     settings = _load_settings()
@@ -508,6 +571,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--force", action="store_true", help="overwrite existing config")
     p_init.add_argument("--runtime", choices=["claude", "codex"], default="claude")
     p_init.add_argument("--skip-hook", action="store_true", help="don't register runtime hooks")
+    p_init.add_argument("--global", dest="global_install", action="store_true", help="install Codex integration in CODEX_HOME")
     p_init.set_defaults(func=cmd_init)
 
     p_logs = sub.add_parser("logs", help="show recent gate events")
@@ -567,7 +631,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp_serve.set_defaults(func=lambda _: mcp_main())
 
     p_doctor = sub.add_parser("doctor", help="check installed runtime integration")
+    p_doctor.add_argument("path", nargs="?", help="target directory (default: cwd)")
     p_doctor.add_argument("--runtime", choices=["codex"], required=True)
+    p_doctor.add_argument("--global", dest="global_install", action="store_true", help="examine CODEX_HOME")
     p_doctor.set_defaults(func=cmd_doctor)
 
     return parser
