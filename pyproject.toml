@@ -41,6 +41,7 @@ dev = [
 gateguard = "gateguard.cli:main"
 gateguard-hook = "gateguard.hook:main"
 gateguard-read-tracker = "gateguard.read_tracker:main"
+gateguard-codex-hook = "gateguard.codex:hook_main"
 
 [project.urls]
 Homepage = "https://github.com/zunoworks/gateguard"

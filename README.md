@@ -2,7 +2,7 @@
 
 ![PyPI](https://img.shields.io/pypi/v/gateguard-ai) ![Python](https://img.shields.io/pypi/pyversions/gateguard-ai) ![License](https://img.shields.io/pypi/l/gateguard-ai) ![CI](https://github.com/zunoworks/gateguard/actions/workflows/ci.yml/badge.svg)
 
-**A fact-forcing hook gate for Claude Code.**
+**A fact-forcing hook gate for Claude Code and Codex.**
 
 > **Not to be confused** with `gateguard-personal` — an internal hook used at ZUNO WORKS with its own version series (`v4.x`). This repository is the public Python package `gateguard-ai` (`v0.x.y` series).
 
@@ -122,6 +122,27 @@ This does three things:
    `gateguard init` upgrades a v0.5.x "Read"-only registration in place.
 
 Restart Claude Code and the gate is active.
+
+### Codex
+
+This fork adds Codex support through a guarded local MCP server. Codex currently
+provides a pre-tool hook but no post-tool hook, so native write and shell tools
+are fail-closed; GateGuard records investigation only after its own MCP tool has
+completed successfully.
+
+Install this Git-only fork in place of `gateguard-ai` from PyPI, then run:
+
+```bash
+gateguard init --runtime codex
+```
+
+The command registers `gateguard mcp serve` with Codex and a `PreToolUse` hook
+in `$CODEX_HOME/hooks.json`. Restart Codex and accept its normal hook-trust
+prompt. Do not use `--dangerously-bypass-hook-trust`.
+
+The `gateguard` MCP server exposes guarded `read`, `search`, `glob`, `write`,
+and `command` tools. A native mutation is intentionally rejected with a message
+to use those tools, so a failed operation never becomes ledger evidence.
 
 ## What the gates do
 

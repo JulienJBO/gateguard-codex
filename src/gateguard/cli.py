@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -27,6 +29,7 @@ HOOK_TIMEOUT_MS = 3000
 # v0.6.0: the read tracker became the evidence ledger — it observes
 # Grep/Glob/investigative Bash in addition to Read.
 READ_TRACKER_MATCHER = "Read|Grep|Glob|Bash"
+CODEX_HOOK_COMMAND = "gateguard-codex-hook"
 
 
 # ---------- init ----------
@@ -136,7 +139,27 @@ def cmd_init(args: argparse.Namespace) -> int:
     )
 
     if args.skip_hook:
-        print("Skipped Claude Code hook registration (--skip-hook)")
+        print("Skipped hook registration (--skip-hook)")
+        return 0
+    if args.runtime == "codex":
+        codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+        hooks_path = codex_home / "hooks.json"
+        try:
+            hooks = json.loads(hooks_path.read_text(encoding="utf-8")) if hooks_path.exists() else {}
+        except json.JSONDecodeError:
+            print(f"Refusing invalid Codex hooks file: {hooks_path}", file=sys.stderr)
+            return 1
+        groups = hooks.setdefault("hooks", {}).setdefault("PreToolUse", [])
+        if not any(h.get("command") == CODEX_HOOK_COMMAND for g in groups for h in g.get("hooks", [])):
+            groups.append({"matcher": ".*", "hooks": [{"type": "command", "command": CODEX_HOOK_COMMAND, "timeout": PRE_HOOK_TIMEOUT_MS}]})
+            hooks_path.parent.mkdir(parents=True, exist_ok=True)
+            hooks_path.write_text(json.dumps(hooks, indent=2) + "\n", encoding="utf-8")
+        try:
+            subprocess.run(["codex", "mcp", "add", "gateguard", "--", "gateguard", "mcp", "serve"], check=True)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"Codex MCP registration failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"Registered Codex hook in {hooks_path}; restart Codex to trust and load it.")
         return 0
 
     settings = _load_settings()
@@ -419,7 +442,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_init = sub.add_parser("init", help="write .gateguard.yml and register the hook")
     p_init.add_argument("path", nargs="?", help="target directory (default: cwd)")
     p_init.add_argument("--force", action="store_true", help="overwrite existing config")
-    p_init.add_argument("--skip-hook", action="store_true", help="don't touch ~/.claude/settings.json")
+    p_init.add_argument("--runtime", choices=["claude", "codex"], default="claude")
+    p_init.add_argument("--skip-hook", action="store_true", help="don't register runtime hooks")
     p_init.set_defaults(func=cmd_init)
 
     p_logs = sub.add_parser("logs", help="show recent gate events")
@@ -471,6 +495,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_reset = sub.add_parser("reset", help="clear in-session state")
     p_reset.set_defaults(func=cmd_reset)
+
+    p_mcp = sub.add_parser("mcp", help="run the guarded stdio MCP server")
+    p_mcp_sub = p_mcp.add_subparsers(dest="mcp_command", required=True)
+    p_mcp_serve = p_mcp_sub.add_parser("serve")
+    from .codex import mcp_main
+    p_mcp_serve.set_defaults(func=lambda _: mcp_main())
 
     return parser
 
